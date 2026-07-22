@@ -27,9 +27,9 @@
     button:disabled { opacity:.48; cursor:not-allowed; }
     button:not(:disabled):hover { opacity:.9; }
     button:not(:disabled):active { opacity:.8; transform:scale(0.98); }
-    .video-container { position: relative; width: 100%; }
+    .video-container { position: relative; width: 100%; display: inline-block; }
     video { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; display:block; }
-    #overlayCanvas { position: absolute; top: 0; left: 0; border-radius: 14px; }
+    #overlayCanvas { position: absolute; top: 0; left: 0; border-radius: 14px; cursor: pointer; max-height: 62vh; }
     canvas { display:none; }
     progress { width:100%; height:14px; accent-color:var(--accent); }
     .status { margin-top:10px; color:#caeaff; min-height:24px; font-size: 0.9rem; }
@@ -142,8 +142,12 @@ addDebug('Setting up video event listeners...');
 video.addEventListener('loadedmetadata', () => {
   addDebug('EVENT: loadedmetadata - duration: ' + video.duration + ', size: ' + video.videoWidth + 'x' + video.videoHeight);
   if (overlayCanvas) {
+    const rect = video.getBoundingClientRect();
     overlayCanvas.width = video.videoWidth;
     overlayCanvas.height = video.videoHeight;
+    overlayCanvas.style.width = video.offsetWidth + 'px';
+    overlayCanvas.style.height = video.offsetHeight + 'px';
+    addDebug('Canvas sized: ' + overlayCanvas.width + 'x' + overlayCanvas.height);
   }
   if (selectedFile) setAnalyzeReady(true);
 });
@@ -207,8 +211,8 @@ function drawSkeleton(landmarks, angles) {
   };
   
   const lineColor = '#59c3ff';
-  const jointRadius = 4;
-  const lineWidth = 2;
+  const jointRadius = 6;
+  const lineWidth = 3;
   
   // Draw skeleton lines
   overlayCtx.strokeStyle = lineColor;
@@ -253,33 +257,26 @@ function drawSkeleton(landmarks, angles) {
   
   // Draw angle labels
   overlayCtx.fillStyle = '#ffca65';
-  overlayCtx.font = 'bold 14px Arial';
+  overlayCtx.font = 'bold 16px Arial';
   overlayCtx.textAlign = 'center';
   overlayCtx.textBaseline = 'middle';
+  overlayCtx.shadowColor = 'rgba(0,0,0,0.8)';
+  overlayCtx.shadowBlur = 4;
+  overlayCtx.shadowOffsetX = 1;
+  overlayCtx.shadowOffsetY = 1;
   
   const shoulder = {x: (p.ls.x + p.rs.x) / 2, y: (p.ls.y + p.rs.y) / 2};
   const hip = {x: (p.lh.x + p.rh.x) / 2, y: (p.lh.y + p.rh.y) / 2};
   
   // Trunk angle
   if (angles.trunk && Number.isFinite(angles.trunk)) {
-    overlayCtx.fillText(angles.trunk.toFixed(1) + '° (Trunk)', shoulder.x, shoulder.y - 30);
-  }
-  
-  // Hip angle
-  if (angles.hip && Number.isFinite(angles.hip)) {
-    overlayCtx.fillText(angles.hip.toFixed(1) + '° (Hip)', hip.x, hip.y - 20);
+    overlayCtx.fillText(Math.abs(angles.trunk).toFixed(1) + '° (Trunk)', shoulder.x, shoulder.y - 30);
   }
   
   // Knee angle
   if (angles.knee && Number.isFinite(angles.knee)) {
     const kneePos = angles.side === 'left' ? p.lk : p.rk;
-    overlayCtx.fillText(angles.knee.toFixed(1) + '° (Knee)', kneePos.x + 30, kneePos.y);
-  }
-  
-  // Ankle angle
-  if (angles.ankle && Number.isFinite(angles.ankle)) {
-    const anklePos = angles.side === 'left' ? p.la : p.ra;
-    overlayCtx.fillText(angles.ankle.toFixed(1) + '° (Ankle)', anklePos.x + 30, anklePos.y + 30);
+    overlayCtx.fillText(angles.knee.toFixed(1) + '° (Knee)', kneePos.x + 40, kneePos.y);
   }
 }
 
@@ -390,9 +387,7 @@ analyzeBtn.addEventListener('click', async (event)=>{
         const shoulder={x:(p.ls.x+p.rs.x)/2,y:(p.ls.y+p.rs.y)/2}, hip={x:(p.lh.x+p.rh.x)/2,y:(p.lh.y+p.rh.y)/2};
         const angles = {
           trunk: Math.atan2(shoulder.x-hip.x,hip.y-shoulder.y)*180/Math.PI,
-          hip: Math.abs(p.lh.y - p.rh.y),
           knee: angle(side==='left'?p.lh:p.rh, side==='left'?p.lk:p.rk, side==='left'?p.la:p.ra),
-          ankle: 0,
           side: side
         };
         drawSkeleton(result.landmarks[0], angles);
