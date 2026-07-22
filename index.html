@@ -28,7 +28,7 @@
     button:not(:disabled):hover { opacity:.9; }
     button:not(:disabled):active { opacity:.8; transform:scale(0.98); }
     video { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; display:block; }
-    canvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; display:block; }
+    #skeletonCanvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; display:block; }
     progress { width:100%; height:14px; accent-color:var(--accent); }
     .status { margin-top:10px; color:#caeaff; min-height:24px; font-size: 0.9rem; }
     .metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
@@ -182,97 +182,125 @@ async function loadModel(){
 function drawSkeleton(landmarks, frameIndex) {
   if (!skeletonCtx || !skeletonCanvas) return;
   
-  // Draw video frame
+  // Clear and redraw video frame
+  skeletonCtx.clearRect(0, 0, skeletonCanvas.width, skeletonCanvas.height);
   skeletonCtx.drawImage(video, 0, 0, skeletonCanvas.width, skeletonCanvas.height);
   
-  // Extract key points
-  const p = {
-    nose: landmarks[0],
-    ls: landmarks[11], rs: landmarks[12],
-    lh: landmarks[23], rh: landmarks[24],
-    lk: landmarks[25], rk: landmarks[26],
-    la: landmarks[27], ra: landmarks[28],
-    lheel: landmarks[29], rheel: landmarks[30],
-    ltoe: landmarks[31], rtoe: landmarks[32]
+  if (!landmarks || landmarks.length === 0) {
+    skeletonCtx.fillStyle = 'rgba(255, 124, 136, 0.8)';
+    skeletonCtx.font = 'bold 16px Arial';
+    skeletonCtx.fillText('No pose detected in this frame', 20, 40);
+    return;
+  }
+  
+  // Key landmark indices
+  const indices = {
+    nose: 0,
+    lEye: 1, rEye: 2,
+    lEar: 3, rEar: 4,
+    lShoulder: 11, rShoulder: 12,
+    lElbow: 13, rElbow: 14,
+    lWrist: 15, rWrist: 16,
+    lHip: 23, rHip: 24,
+    lKnee: 25, rKnee: 26,
+    lAnkle: 27, rAnkle: 28,
+    lHeel: 29, rHeel: 30,
+    lToe: 31, rToe: 32
   };
   
-  const lineColor = '#59c3ff';
-  const jointRadius = 6;
-  const lineWidth = 3;
+  const points = {};
+  for (const [name, idx] of Object.entries(indices)) {
+    if (landmarks[idx]) {
+      points[name] = landmarks[idx];
+    }
+  }
+  
+  // Define skeleton connections
+  const connections = [
+    ['nose', 'lEye'], ['lEye', 'lEar'],
+    ['nose', 'rEye'], ['rEye', 'rEar'],
+    ['lShoulder', 'rShoulder'],
+    ['lShoulder', 'lElbow'], ['lElbow', 'lWrist'],
+    ['rShoulder', 'rElbow'], ['rElbow', 'rWrist'],
+    ['lShoulder', 'lHip'], ['rShoulder', 'rHip'],
+    ['lHip', 'rHip'],
+    ['lHip', 'lKnee'], ['lKnee', 'lAnkle'],
+    ['rHip', 'rKnee'], ['rKnee', 'rAnkle'],
+    ['lAnkle', 'lHeel'], ['lHeel', 'lToe'],
+    ['rAnkle', 'rHeel'], ['rHeel', 'rToe']
+  ];
   
   // Draw skeleton lines
-  skeletonCtx.strokeStyle = lineColor;
-  skeletonCtx.lineWidth = lineWidth;
+  skeletonCtx.strokeStyle = '#59c3ff';
+  skeletonCtx.lineWidth = 3;
   skeletonCtx.lineCap = 'round';
   skeletonCtx.lineJoin = 'round';
   
-  // Body segments
-  const segments = [
-    [p.nose, {x: (p.ls.x + p.rs.x) / 2, y: (p.ls.y + p.rs.y) / 2}], // neck to shoulders
-    [p.ls, p.lh], // left shoulder to hip
-    [p.rs, p.rh], // right shoulder to hip
-    [p.lh, p.rh], // hip line
-    [p.lh, p.lk], // left hip to knee
-    [p.rh, p.rk], // right hip to knee
-    [p.lk, p.la], // left knee to ankle
-    [p.rk, p.ra], // right knee to ankle
-    [p.la, p.lheel], // left ankle to heel
-    [p.ra, p.rheel], // right ankle to heel
-    [p.lheel, p.ltoe], // left heel to toe
-    [p.rheel, p.rtoe], // right heel to toe
-  ];
-  
-  segments.forEach(([start, end]) => {
-    if (start.visibility > 0.3 && end.visibility > 0.3) {
+  for (const [start, end] of connections) {
+    const p1 = points[start];
+    const p2 = points[end];
+    if (p1 && p2 && (p1.visibility || 1) > 0.3 && (p2.visibility || 1) > 0.3) {
       skeletonCtx.beginPath();
-      skeletonCtx.moveTo(start.x, start.y);
-      skeletonCtx.lineTo(end.x, end.y);
+      skeletonCtx.moveTo(p1.x, p1.y);
+      skeletonCtx.lineTo(p2.x, p2.y);
       skeletonCtx.stroke();
     }
-  });
+  }
   
-  // Draw joints
-  skeletonCtx.fillStyle = lineColor;
-  Object.values(p).forEach(point => {
-    if (point.visibility > 0.3) {
+  // Draw joints as circles
+  skeletonCtx.fillStyle = '#59c3ff';
+  for (const pt of Object.values(points)) {
+    if (pt && (pt.visibility || 1) > 0.3) {
       skeletonCtx.beginPath();
-      skeletonCtx.arc(point.x, point.y, jointRadius, 0, Math.PI * 2);
+      skeletonCtx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
       skeletonCtx.fill();
     }
-  });
+  }
   
   // Draw angle labels
   const side = $('side').value;
-  const shoulder = {x: (p.ls.x + p.rs.x) / 2, y: (p.ls.y + p.rs.y) / 2};
-  const hip = {x: (p.lh.x + p.rh.x) / 2, y: (p.lh.y + p.rh.y) / 2};
-  const trunkAngle = Math.atan2(shoulder.x-hip.x,hip.y-shoulder.y)*180/Math.PI;
-  const kneeAngle = angle(side==='left'?p.lh:p.rh, side==='left'?p.lk:p.rk, side==='left'?p.la:p.ra);
-  
-  skeletonCtx.fillStyle = '#ffca65';
-  skeletonCtx.font = 'bold 18px Arial';
-  skeletonCtx.textAlign = 'center';
-  skeletonCtx.textBaseline = 'middle';
-  skeletonCtx.shadowColor = 'rgba(0,0,0,0.8)';
-  skeletonCtx.shadowBlur = 4;
-  skeletonCtx.shadowOffsetX = 1;
-  skeletonCtx.shadowOffsetY = 1;
-  
-  // Trunk angle
-  if (Number.isFinite(trunkAngle)) {
-    skeletonCtx.fillText(Math.abs(trunkAngle).toFixed(1) + '° (Trunk)', shoulder.x, shoulder.y - 35);
+  if (points.lShoulder && points.rShoulder && points.lHip && points.rHip) {
+    const shoulder = {
+      x: (points.lShoulder.x + points.rShoulder.x) / 2,
+      y: (points.lShoulder.y + points.rShoulder.y) / 2
+    };
+    const hip = {
+      x: (points.lHip.x + points.rHip.x) / 2,
+      y: (points.lHip.y + points.rHip.y) / 2
+    };
+    const trunkAngle = Math.atan2(shoulder.x - hip.x, hip.y - shoulder.y) * 180 / Math.PI;
+    
+    skeletonCtx.fillStyle = '#ffca65';
+    skeletonCtx.font = 'bold 18px Arial';
+    skeletonCtx.textAlign = 'center';
+    skeletonCtx.textBaseline = 'middle';
+    skeletonCtx.shadowColor = 'rgba(0,0,0,0.8)';
+    skeletonCtx.shadowBlur = 4;
+    
+    skeletonCtx.fillText(Math.abs(trunkAngle).toFixed(1) + '° Trunk', shoulder.x, shoulder.y - 35);
   }
   
   // Knee angle
-  if (Number.isFinite(kneeAngle)) {
-    const kneePos = side === 'left' ? p.lk : p.rk;
-    skeletonCtx.fillText(kneeAngle.toFixed(1) + '° (Knee)', kneePos.x + 40, kneePos.y);
+  const side_prefix = side === 'left' ? 'l' : 'r';
+  const hipPt = side === 'left' ? points.lHip : points.rHip;
+  const kneePt = side === 'left' ? points.lKnee : points.rKnee;
+  const anklePt = side === 'left' ? points.lAnkle : points.rAnkle;
+  
+  if (hipPt && kneePt && anklePt) {
+    const kneeAngle = angle(hipPt, kneePt, anklePt);
+    if (Number.isFinite(kneeAngle)) {
+      skeletonCtx.fillStyle = '#ffca65';
+      skeletonCtx.fillText(kneeAngle.toFixed(1) + '° Knee', kneePt.x + 50, kneePt.y);
+    }
   }
   
   // Frame counter
-  skeletonCtx.fillStyle = 'rgba(255,255,255,0.7)';
+  skeletonCtx.fillStyle = 'rgba(255,255,255,0.8)';
   skeletonCtx.font = '14px Arial';
   skeletonCtx.textAlign = 'left';
-  skeletonCtx.fillText(`Frame ${frameIndex + 1} / ${frameData.length}`, 15, 30);
+  skeletonCtx.shadowColor = 'rgba(0,0,0,0.5)';
+  skeletonCtx.shadowBlur = 2;
+  skeletonCtx.fillText(`Frame ${frameIndex + 1} / ${frameData.length}`, 15, 35);
 }
 
 function buildRow(l, t){
@@ -345,7 +373,7 @@ recordInput.addEventListener('change', (e) => {
 
 frameSlider.addEventListener('input', (e) => {
   const frameIndex = parseInt(e.target.value);
-  if (frameData[frameIndex] && frameData[frameIndex].landmarks) {
+  if (frameData[frameIndex]) {
     video.currentTime = frameData[frameIndex].time;
     drawSkeleton(frameData[frameIndex].landmarks, frameIndex);
     frameLabel.textContent = `${frameIndex + 1}/${frameData.length}`;
