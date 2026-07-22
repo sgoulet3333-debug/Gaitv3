@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="Private, on-device walking gait video analysis for ACL rehabilitation tracking." />
+    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <title>ACL Walk Gait Analyzer v5</title>
+  <style>
+    :root { color-scheme: dark; --bg:#07111f; --card:#0f1d31; --muted:#9fb0c7; --line:#233650; --accent:#59c3ff; --good:#54d38a; --warn:#ffca65; --bad:#ff7c88; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:linear-gradient(180deg,#07111f,#0a1626 40%,#07111f); color:#f8fafc; }
+    main { max-width:760px; margin:auto; padding:18px 14px 48px; }
+    h1 { font-size:clamp(1.65rem,6vw,2.25rem); margin:5px 0 6px; }
+    h2 { font-size:1.15rem; margin:0 0 12px; }
+    p { line-height:1.5; }
+    .muted { color:var(--muted); }
+    .card { background:rgba(15,29,49,.94); border:1px solid var(--line); border-radius:18px; padding:16px; margin:14px 0; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+    .badge { display:inline-block; font-size:.8rem; padding:5px 9px; border-radius:999px; background:#122842; color:#b9e8ff; border:1px solid #28506f; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    @media(max-width:520px){ .grid{grid-template-columns:1fr;} }
+    label { display:block; font-weight:650; margin-bottom:7px; }
+    select,input[type=file],button { width:100%; min-height:48px; border-radius:12px; border:1px solid #34506f; font:inherit; }
+    select,input[type=file] { color:#f8fafc; background:#0a1729; padding:10px; }
+    button { cursor:pointer; background:linear-gradient(135deg,#48b9f2,#6fd8ff); color:#052033; font-weight:800; border:0; padding:12px 16px; }
+    button:disabled { opacity:.48; cursor:not-allowed; }
+    video,canvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; }
+    canvas { display:none; }
+    progress { width:100%; height:14px; accent-color:var(--accent); }
+    .status { margin-top:10px; color:#caeaff; min-height:24px; }
+    .metrics { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .metric { background:#091729; border:1px solid var(--line); border-radius:14px; padding:12px; }
+    .metric strong { display:block; font-size:1.35rem; margin-top:4px; }
+    .metric span { color:var(--muted); font-size:.82rem; }
+    ul { padding-left:20px; line-height:1.5; }
+    .notice { border-left:4px solid var(--warn); background:#211b10; padding:10px 12px; border-radius:8px; }
+    .good { color:var(--good); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+    .hidden { display:none !important; }
+    .footer { font-size:.82rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <span class="badge">Runs privately on your phone</span>
+  <h1>ACL Walk Gait Analyzer <span style="font-size:.45em;color:#9fb0c7">v5</span></h1>
+  <p class="muted">Upload a side-view walking video. The app estimates knee motion, step timing, trunk compensation, and side-to-side differences.</p>
+
+  <section class="card">
+    <h2>1. Record correctly</h2>
+    <ul>
+      <li>Film 8–12 natural steps from the side.</li>
+      <li>Keep the full body visible and phone still at hip height.</li>
+      <li>Use a level walkway, fitted clothing, and good lighting.</li>
+      <li>Short clips under 30 seconds work best on a phone.</li>
+    </ul>
+  </section>
+
+  <section class="card">
+    <h2>2. Choose and analyze</h2>
+    <div class="grid">
+      <div><label for="side">Operated knee</label><select id="side"><option value="left">Left</option><option value="right">Right</option></select></div>
+      <div>
+        <label>Walking video</label>
+        <input id="videoFile" type="file" accept="video/mp4,video/webm,video/quicktime,video/*" />
+        <div style="height:8px"></div>
+        <label for="recordFile" class="muted" style="font-size:.9rem">Or record a new video</label>
+        <input id="recordFile" type="file" accept="video/*" capture="environment" />
+      </div>
+    </div>
+    <p class="muted" id="fileNote">Your video is not uploaded to a server.</p>
+    <video id="video" controls playsinline preload="metadata"></video>
+    <canvas id="canvas"></canvas>
+    <button id="analyze" type="button" disabled>Choose a walking video first</button>
+    <progress id="progress" class="hidden" max="100" value="0"></progress>
+    <div id="status" class="status"></div>
+  </section>
+
+  <section id="results" class="card hidden">
+    <h2>3. Screening results</h2>
+    <div id="quality" class="notice"></div>
+    <div id="metrics" class="metrics" style="margin-top:12px"></div>
+    <h2 style="margin-top:18px">Suggestions to discuss with your PT</h2>
+    <ul id="suggestions"></ul>
+    <button id="downloadCsv" style="margin-top:8px">Download frame data (CSV)</button>
+  </section>
+
+  <section class="card">
+    <h2>Important limits</h2>
+    <p class="muted">This is an educational tracking tool, not a diagnosis or medical device. A single phone video cannot measure graft integrity, joint forces, or true 3D gait. Do not change your rehabilitation plan based only on this app.</p>
+    <p class="footer">Stop and contact a clinician for worsening swelling, instability, locking, wound drainage, calf swelling, chest pain, or shortness of breath.</p>
+  </section>
+</main>
+<script>
+// Single-file build: all controls initialize even when Android opens this HTML locally.
+const $ = (id) => document.getElementById(id);
+const video = $('video');
+const fileInput = $('videoFile');
+const recordInput = $('recordFile');
+const analyzeBtn = $('analyze');
+const canvas = $('canvas');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+let poseLandmarker;
+let rows = [];
+let currentUrl = null;
+let selectedFile = null;
+
+window.addEventListener('error', (event) => {
+  setStatus(`App error: ${event.message || 'Unknown browser error'}`);
+});
+window.addEventListener('unhandledrejection', (event) => {
+  const message = event.reason?.message || String(event.reason || 'Unknown error');
+  setStatus(`App error: ${message}`);
+});
+
+function setStatus(message) { $('status').textContent = message; }
+function setAnalyzeReady(ready) {
+  analyzeBtn.disabled = !ready;
+  analyzeBtn.textContent = ready ? 'Analyze walking gait' : 'Choose a walking video first';
+}
+
+function angle(a,b,c){
+  const bax=a.x-b.x, bay=a.y-b.y, bcx=c.x-b.x, bcy=c.y-b.y;
+  const d=Math.hypot(bax,bay)*Math.hypot(bcx,bcy); if(d<1e-8) return NaN;
+  return Math.acos(Math.max(-1,Math.min(1,(bax*bcx+bay*bcy)/d)))*180/Math.PI;
+}
+function mean(a){ const v=a.filter(Number.isFinite); return v.length?v.reduce((s,x)=>s+x,0)/v.length:NaN; }
+function percentile(a,p){ const v=a.filter(Number.isFinite).sort((x,y)=>x-y); if(!v.length)return NaN; const i=(v.length-1)*p,l=Math.floor(i),h=Math.ceil(i); return v[l]+(v[h]-v[l])*(i-l); }
+function smooth(a,w=7){ return a.map((_,i)=>mean(a.slice(Math.max(0,i-Math.floor(w/2)),Math.min(a.length,i+Math.ceil(w/2))))); }
+function minima(a,minDistance){
+  const c=[]; for(let i=1;i<a.length-1;i++) if(Number.isFinite(a[i])&&a[i]<a[i-1]&&a[i]<=a[i+1]) c.push(i);
+  const out=[]; for(const i of c.sort((x,y)=>a[x]-a[y])) if(out.every(j=>Math.abs(i-j)>=minDistance)) out.push(i);
+  return out.sort((x,y)=>x-y);
+}
+function fmt(v,s=''){ return Number.isFinite(v)?`${v.toFixed(1)}${s}`:'Not enough data'; }
+
+async function loadModel(){
+  if(poseLandmarker) return;
+  setStatus('Loading the gait-analysis model…');
+  let visionModule;
+  try {
+    visionModule = await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/+esm');
+  } catch (error) {
+    throw new Error('The analysis library could not load. Check your internet connection, disable content blocking for this page, then reload.');
+  }
+  const { FilesetResolver, PoseLandmarker } = visionModule;
+  const vision=await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm');
+  try {
+    poseLandmarker=await PoseLandmarker.createFromOptions(vision,{
+      baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate:'GPU' },
+      runningMode:'VIDEO', numPoses:1, minPoseDetectionConfidence:.55, minPosePresenceConfidence:.55, minTrackingConfidence:.55
+    });
+  } catch (gpuError) {
+    poseLandmarker=await PoseLandmarker.createFromOptions(vision,{
+      baseOptions:{ modelAssetPath:'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task', delegate:'CPU' },
+      runningMode:'VIDEO', numPoses:1, minPoseDetectionConfidence:.55, minPosePresenceConfidence:.55, minTrackingConfidence:.55
+    });
+  }
+}
+
+function waitForMetadata(timeoutMs=10000) {
+  if (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { cleanup(); reject(new Error('The phone could not read this video. Try selecting it from Gallery or record as MP4.')); }, timeoutMs);
+    const loaded = () => { cleanup(); resolve(); };
+    const failed = () => { cleanup(); reject(new Error('This video format could not be opened by the browser.')); };
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('loadedmetadata', loaded);
+      video.removeEventListener('error', failed);
+    };
+    video.addEventListener('loadedmetadata', loaded, { once:true });
+    video.addEventListener('error', failed, { once:true });
+    video.load();
+  });
+}
+
+async function prepareSelectedVideo(file, sourceInput) {
+  selectedFile = file || null;
+  $('results').classList.add('hidden');
+  setAnalyzeReady(false);
+  setStatus('');
+  if (!file) {
+    $('fileNote').textContent='Your video is not uploaded to a server.';
+    return;
+  }
+  if (sourceInput === fileInput) recordInput.value = '';
+  if (sourceInput === recordInput) fileInput.value = '';
+  if (currentUrl) URL.revokeObjectURL(currentUrl);
+  currentUrl = URL.createObjectURL(file);
+  video.pause();
+  video.removeAttribute('src');
+  video.load();
+  video.src = currentUrl;
+  video.muted = true;
+  video.playsInline = true;
+  $('fileNote').textContent=`${file.name || 'Recorded walking video'} • ${(file.size/1048576).toFixed(1)} MB • stays on this device`;
+  setStatus('Reading video…');
+  try {
+    await waitForMetadata(20000);
+    setAnalyzeReady(true);
+    setStatus(`Video ready: ${video.duration.toFixed(1)} seconds. Tap Analyze walking gait.`);
+  } catch (error) {
+    setStatus(error.message);
+  }
+}
+
+fileInput.addEventListener('change', () => prepareSelectedVideo(fileInput.files?.[0], fileInput));
+recordInput.addEventListener('change', () => prepareSelectedVideo(recordInput.files?.[0], recordInput));
+
+analyzeBtn.addEventListener('click', async (event)=>{
+  event.preventDefault();
+  setStatus('Starting analysis…');
+  if (!selectedFile) {
+    setStatus('Choose or record a walking video first.');
+    return;
+  }
+  try{
+    analyzeBtn.disabled=true; analyzeBtn.textContent='Analyzing…';
+    $('progress').classList.remove('hidden'); $('progress').value=0; $('results').classList.add('hidden'); rows=[];
+    await waitForMetadata();
+    await loadModel();
+    if(!Number.isFinite(video.duration)||video.duration<=0) throw new Error('The video duration could not be read. Try an MP4 recorded by your phone.');
+    if (!video.videoWidth || !video.videoHeight) throw new Error('The video image could not be decoded. Try selecting the clip from your Gallery.');
+    const duration=Math.min(video.duration,30), sampleFps=10, frames=Math.max(1,Math.floor(duration*sampleFps));
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+    for(let i=0;i<frames;i++){
+      const t=Math.max(0, Math.min(duration-.001,i/sampleFps)); await seek(t); ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      const result=poseLandmarker.detectForVideo(canvas,Math.round(t*1000));
+      if(result.landmarks?.[0]) rows.push(buildRow(result.landmarks[0],t)); else rows.push({time_s:t});
+      $('progress').value=Math.round((i+1)/frames*100); setStatus(`Analyzing frame ${i+1} of ${frames}…`);
+      if(i%4===0) await new Promise(r=>setTimeout(r,0));
+    }
+    renderResults(rows,$('side').value,sampleFps); setStatus('Analysis complete.');
+  }catch(e){ setStatus(`Could not analyze this video: ${e.message}`); }
+  finally{ setAnalyzeReady(Boolean(selectedFile)); $('progress').classList.add('hidden'); }
+});
+
+function seek(time){
+  if (Math.abs(video.currentTime - time) < 0.002 && video.readyState >= 2) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const timer=setTimeout(()=>{cleanup();reject(new Error('Timed out while reading a video frame.'));},5000);
+    const done=()=>{cleanup();resolve();}, fail=()=>{cleanup();reject(new Error('Could not read a video frame.'));};
+    const cleanup=()=>{clearTimeout(timer);video.removeEventListener('seeked',done);video.removeEventListener('error',fail)};
+    video.addEventListener('seeked',done,{once:true}); video.addEventListener('error',fail,{once:true}); video.currentTime=time;
+  });
+}
+
+function buildRow(l,t){
+  const p={ls:l[11],rs:l[12],lh:l[23],rh:l[24],lk:l[25],rk:l[26],la:l[27],ra:l[28],lheel:l[29],rheel:l[30],ltoe:l[31],rtoe:l[32]};
+  const shoulder={x:(p.ls.x+p.rs.x)/2,y:(p.ls.y+p.rs.y)/2}, hip={x:(p.lh.x+p.rh.x)/2,y:(p.lh.y+p.rh.y)/2};
+  const r={time_s:t,left_knee_angle:angle(p.lh,p.lk,p.la),right_knee_angle:angle(p.rh,p.rk,p.ra),left_heel_y:p.lheel.y,right_heel_y:p.rheel.y,hip_drop:p.lh.y-p.rh.y,trunk_lean_deg:Math.atan2(shoulder.x-hip.x,hip.y-shoulder.y)*180/Math.PI};
+  for(const [k,v] of Object.entries(p)){ r[`${k}_x`]=v.x;r[`${k}_y`]=v.y;r[`${k}_visibility`]=v.visibility??1; }
+  return r;
+}
+
+function renderResults(data,side,fps){
+  const other=side==='left'?'right':'left', valid=data.filter(r=>Number.isFinite(r[`${side}_knee_angle`]));
+  const detection=valid.length/data.length;
+  for(const col of [`${side}_knee_angle`,`${other}_knee_angle`,`${side}_heel_y`,`${other}_heel_y`,'trunk_lean_deg','hip_drop']){
+    const sm=smooth(data.map(r=>r[col])); data.forEach((r,i)=>r[col]=sm[i]);
+  }
+  const minDist=Math.max(5,Math.floor(fps*.45));
+  const op=minima(data.map(r=>-r[`${side}_heel_y`]),minDist), ot=minima(data.map(r=>-r[`${other}_heel_y`]),minDist);
+  const ext=(idx,s)=>idx.map(i=>Math.max(...data.slice(Math.max(0,i-2),Math.min(data.length,i+3)).map(r=>r[`${s}_knee_angle`]).filter(Number.isFinite)));
+  const opExt=ext(op,side), otExt=ext(ot,other), opCycles=op.slice(1).map((x,i)=>(x-op[i])/fps), otCycles=ot.slice(1).map((x,i)=>(x-ot[i])/fps);
+  const opAngles=data.map(r=>r[`${side}_knee_angle`]), otAngles=data.map(r=>r[`${other}_knee_angle`]);
+  const opRom=percentile(opAngles,.95)-percentile(opAngles,.05), otRom=percentile(otAngles,.95)-percentile(otAngles,.05);
+  const extensionDiff=mean(otExt)-mean(opExt), cycleMean=mean([mean(opCycles),mean(otCycles)]), asym=Math.abs(mean(opCycles)-mean(otCycles))/cycleMean*100;
+  const metrics=[['Operated extension near contact',fmt(mean(opExt),'°')],['Other-side extension near contact',fmt(mean(otExt),'°')],['Estimated extension difference',fmt(extensionDiff,'°')],['Operated knee movement range',fmt(opRom,'°')],['Other-side movement range',fmt(otRom,'°')],['Estimated stride-time asymmetry',fmt(asym,'%')],['Mean trunk lean',fmt(mean(data.map(r=>Math.abs(r.trunk_lean_deg))),'°')],['Detected operated contacts',String(op.length)]];
+  $('metrics').innerHTML=metrics.map(([n,v])=>`<div class="metric"><span>${n}</span><strong>${v}</strong></div>`).join('');
+  const notes=[];
+  if(detection<.7) notes.push('Body tracking was inconsistent. Re-record with brighter lighting and your entire body visible.');
+  if(op.length<3||ot.length<3) notes.push('Only a few foot contacts were detected. Use a longer clip with 8–12 clear steps.');
+  if(Number.isFinite(extensionDiff)&&extensionDiff>5) notes.push('The operated knee appears less straight near foot contact. Ask your PT to check swelling, extension range, quadriceps control, and terminal-knee-extension avoidance.');
+  if(Number.isFinite(opRom)&&Number.isFinite(otRom)&&opRom+8<otRom) notes.push('The operated knee shows a smaller movement range. Use only gait and mobility drills already approved by your surgeon or PT.');
+  if(Number.isFinite(asym)&&asym>10) notes.push('Step timing appears asymmetric. Ask your PT to assess weight acceptance, stance time, pain, and confidence on the operated leg.');
+  const trunk=mean(data.map(r=>Math.abs(r.trunk_lean_deg))); if(Number.isFinite(trunk)&&trunk>6) notes.push('Trunk compensation was detected. Your PT can determine whether pain, hip weakness, balance, or reduced stance time is contributing.');
+  if(!notes.length) notes.push('No large difference crossed the app's conservative screening thresholds. Continue your prescribed rehabilitation and show the video and results to your PT.');
+  $('suggestions').innerHTML=notes.map(n=>`<li>${n}</li>`).join('');
+  $('quality').innerHTML=`Tracking quality: <strong class="${detection>.85?'good':detection>.65?'warn':'bad'}">${Math.round(detection*100)}%</strong>. Results are more useful when both feet have at least three detected contacts.`;
+  $('results').classList.remove('hidden'); $('results').scrollIntoView({behavior:'smooth'});
+}
+
+$('downloadCsv').addEventListener('click',()=>{
+  if(!rows.length)return; const keys=[...new Set(rows.flatMap(Object.keys))];
+  const csv=[keys.join(','),...rows.map(r=>keys.map(k=>Number.isFinite(r[k])?r[k]: '').join(','))].join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='acl-gait-frame-data.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+});
+
+setAnalyzeReady(false);
+
+
+// Explain local-file limitations without preventing file selection.
+if (location.protocol === 'content:' || location.protocol === 'file:') {
+  const note = document.getElementById('fileNote');
+  if (note) note.innerHTML = '<strong style="color:#ffca65">Local-file mode:</strong> video selection will work, but Android may block the online gait model. For reliable analysis, open the published GitHub Pages website (an https:// address), not this downloaded HTML file.';
+}
+if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(()=>{}); }
+if ('caches' in window) { caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(()=>{}); }
+</script>
+</body>
+</html>
