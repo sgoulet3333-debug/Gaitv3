@@ -23,10 +23,10 @@
     label { display:block; font-weight:650; margin-bottom:7px; }
     select,input[type=file],button { width:100%; min-height:48px; border-radius:12px; border:1px solid #34506f; font:inherit; }
     select,input[type=file] { color:#f8fafc; background:#0a1729; padding:10px; }
-    button { cursor:pointer; background:linear-gradient(135deg,#48b9f2,#6fd8ff); color:#052033; font-weight:800; border:0; padding:12px 16px; transition:opacity 0.2s; }
+    button { cursor:pointer; background:linear-gradient(135deg,#48b9f2,#6fd8ff); color:#052033; font-weight:800; border:0; padding:12px 16px; transition:all 0.2s; }
     button:disabled { opacity:.48; cursor:not-allowed; }
     button:not(:disabled):hover { opacity:.9; }
-    button:not(:disabled):active { opacity:.8; }
+    button:not(:disabled):active { opacity:.8; transform:scale(0.98); }
     video,canvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; }
     canvas { display:none; }
     progress { width:100%; height:14px; accent-color:var(--accent); }
@@ -125,7 +125,7 @@ function setStatus(message) {
 function setAnalyzeReady(ready) {
   analyzeBtn.disabled = !ready;
   analyzeBtn.textContent = ready ? 'Analyze walking gait' : 'Choose a walking video first';
-  console.log('Analyze button ready:', ready);
+  console.log('Analyze button ready:', ready, 'disabled:', analyzeBtn.disabled);
 }
 
 function angle(a,b,c){
@@ -168,23 +168,47 @@ async function loadModel(){
 }
 
 function waitForMetadata(timeoutMs=10000) {
-  if (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) return Promise.resolve();
+  console.log('waitForMetadata called. Current state - readyState:', video.readyState, 'duration:', video.duration);
+  
+  // Already loaded?
+  if (video.readyState >= 1 && Number.isFinite(video.duration) && video.duration > 0) {
+    console.log('Video metadata already available');
+    return Promise.resolve();
+  }
+  
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { cleanup(); reject(new Error('The phone could not read this video. Try selecting it from Gallery or record as MP4.')); }, timeoutMs);
-    const loaded = () => { cleanup(); resolve(); };
-    const failed = () => { cleanup(); reject(new Error('This video format could not be opened by the browser.')); };
+    const timer = setTimeout(() => { 
+      cleanup(); 
+      reject(new Error('The phone could not read this video. Try selecting it from Gallery or record as MP4.')); 
+    }, timeoutMs);
+    
+    const loaded = () => { 
+      console.log('loadedmetadata event fired');
+      cleanup(); 
+      resolve(); 
+    };
+    
+    const failed = () => { 
+      console.error('Video error event fired:', video.error);
+      cleanup(); 
+      reject(new Error('This video format could not be opened by the browser.')); 
+    };
+    
     const cleanup = () => {
       clearTimeout(timer);
       video.removeEventListener('loadedmetadata', loaded);
       video.removeEventListener('error', failed);
     };
+    
     video.addEventListener('loadedmetadata', loaded, { once:true });
     video.addEventListener('error', failed, { once:true });
-    video.load();
+    // DO NOT call video.load() - it will reset the src we just set
   });
 }
 
 async function prepareSelectedVideo(file, sourceInput) {
+  console.log('prepareSelectedVideo called with file:', file?.name);
+  
   selectedFile = file || null;
   $('results').classList.add('hidden');
   setAnalyzeReady(false);
@@ -192,19 +216,21 @@ async function prepareSelectedVideo(file, sourceInput) {
   
   if (!file) {
     $('fileNote').textContent='Your video is not uploaded to a server.';
-    console.log('No file selected');
+    console.log('No file selected, returning');
     return;
   }
   
-  console.log('File selected:', file.name, 'Size:', file.size);
+  console.log('File selected:', file.name, 'Size:', file.size, 'Type:', file.type);
   
   if (sourceInput === fileInput) recordInput.value = '';
   if (sourceInput === recordInput) fileInput.value = '';
   if (currentUrl) URL.revokeObjectURL(currentUrl);
   currentUrl = URL.createObjectURL(file);
   
+  console.log('Created blob URL:', currentUrl);
+  
+  // Set up video before changing src
   video.pause();
-  video.removeAttribute('src');
   video.src = currentUrl;
   video.muted = true;
   video.playsInline = true;
@@ -214,7 +240,7 @@ async function prepareSelectedVideo(file, sourceInput) {
   
   try {
     await waitForMetadata(20000);
-    console.log('Video loaded. Duration:', video.duration, 'Width:', video.videoWidth, 'Height:', video.videoHeight);
+    console.log('Video ready. Duration:', video.duration, 'Width:', video.videoWidth, 'Height:', video.videoHeight);
     setAnalyzeReady(true);
     setStatus(`Video ready: ${video.duration.toFixed(1)} seconds. Tap Analyze walking gait.`);
   } catch (error) {
@@ -224,18 +250,18 @@ async function prepareSelectedVideo(file, sourceInput) {
 }
 
 fileInput.addEventListener('change', (e) => {
-  console.log('File input changed');
+  console.log('File input change event');
   prepareSelectedVideo(fileInput.files?.[0], fileInput);
 });
 
 recordInput.addEventListener('change', (e) => {
-  console.log('Record input changed');
+  console.log('Record input change event');
   prepareSelectedVideo(recordInput.files?.[0], recordInput);
 });
 
 analyzeBtn.addEventListener('click', async (event)=>{
   event.preventDefault();
-  console.log('Analyze clicked. Selected file:', selectedFile);
+  console.log('Analyze clicked. Selected file:', selectedFile?.name);
   setStatus('Starting analysis…');
   if (!selectedFile) {
     setStatus('Choose or record a walking video first.');
@@ -318,15 +344,7 @@ $('downloadCsv').addEventListener('click',()=>{
 });
 
 setAnalyzeReady(false);
-console.log('App initialized. Button disabled state:', analyzeBtn.disabled);
-
-// Explain local-file limitations without preventing file selection.
-if (location.protocol === 'content:' || location.protocol === 'file:') {
-  const note = document.getElementById('fileNote');
-  if (note) note.innerHTML = '<strong style="color:#ffca65">Local-file mode:</strong> video selection will work, but Android may block the online gait model. For reliable analysis, open the published GitHub Pages website (an https:// address), not this downloaded HTML file.';
-}
-if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.unregister())).catch(()=>{}); }
-if ('caches' in window) { caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k)))).catch(()=>{}); }
+console.log('App initialized. Button disabled:', analyzeBtn.disabled);
 </script>
 </body>
 </html>
