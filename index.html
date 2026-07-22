@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <meta name="theme-color" content="#0f172a" />
   <meta name="description" content="Private, on-device walking gait video analysis for ACL rehabilitation tracking." />
-    <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%2359c3ff'/></svg>" />
   <title>ACL Walk Gait Analyzer v5</title>
   <style>
     :root { color-scheme: dark; --bg:#07111f; --card:#0f1d31; --muted:#9fb0c7; --line:#233650; --accent:#59c3ff; --good:#54d38a; --warn:#ffca65; --bad:#ff7c88; }
@@ -23,8 +23,10 @@
     label { display:block; font-weight:650; margin-bottom:7px; }
     select,input[type=file],button { width:100%; min-height:48px; border-radius:12px; border:1px solid #34506f; font:inherit; }
     select,input[type=file] { color:#f8fafc; background:#0a1729; padding:10px; }
-    button { cursor:pointer; background:linear-gradient(135deg,#48b9f2,#6fd8ff); color:#052033; font-weight:800; border:0; padding:12px 16px; }
+    button { cursor:pointer; background:linear-gradient(135deg,#48b9f2,#6fd8ff); color:#052033; font-weight:800; border:0; padding:12px 16px; transition:opacity 0.2s; }
     button:disabled { opacity:.48; cursor:not-allowed; }
+    button:not(:disabled):hover { opacity:.9; }
+    button:not(:disabled):active { opacity:.8; }
     video,canvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; }
     canvas { display:none; }
     progress { width:100%; height:14px; accent-color:var(--accent); }
@@ -107,16 +109,23 @@ let selectedFile = null;
 
 window.addEventListener('error', (event) => {
   setStatus(`App error: ${event.message || 'Unknown browser error'}`);
+  console.error('Error:', event);
 });
 window.addEventListener('unhandledrejection', (event) => {
   const message = event.reason?.message || String(event.reason || 'Unknown error');
   setStatus(`App error: ${message}`);
+  console.error('Unhandled rejection:', event.reason);
 });
 
-function setStatus(message) { $('status').textContent = message; }
+function setStatus(message) { 
+  $('status').textContent = message;
+  console.log('Status:', message);
+}
+
 function setAnalyzeReady(ready) {
   analyzeBtn.disabled = !ready;
   analyzeBtn.textContent = ready ? 'Analyze walking gait' : 'Choose a walking video first';
+  console.log('Analyze button ready:', ready);
 }
 
 function angle(a,b,c){
@@ -180,36 +189,53 @@ async function prepareSelectedVideo(file, sourceInput) {
   $('results').classList.add('hidden');
   setAnalyzeReady(false);
   setStatus('');
+  
   if (!file) {
     $('fileNote').textContent='Your video is not uploaded to a server.';
+    console.log('No file selected');
     return;
   }
+  
+  console.log('File selected:', file.name, 'Size:', file.size);
+  
   if (sourceInput === fileInput) recordInput.value = '';
   if (sourceInput === recordInput) fileInput.value = '';
   if (currentUrl) URL.revokeObjectURL(currentUrl);
   currentUrl = URL.createObjectURL(file);
+  
   video.pause();
   video.removeAttribute('src');
-  video.load();
   video.src = currentUrl;
   video.muted = true;
   video.playsInline = true;
+  
   $('fileNote').textContent=`${file.name || 'Recorded walking video'} • ${(file.size/1048576).toFixed(1)} MB • stays on this device`;
   setStatus('Reading video…');
+  
   try {
     await waitForMetadata(20000);
+    console.log('Video loaded. Duration:', video.duration, 'Width:', video.videoWidth, 'Height:', video.videoHeight);
     setAnalyzeReady(true);
     setStatus(`Video ready: ${video.duration.toFixed(1)} seconds. Tap Analyze walking gait.`);
   } catch (error) {
+    console.error('Error loading video:', error);
     setStatus(error.message);
   }
 }
 
-fileInput.addEventListener('change', () => prepareSelectedVideo(fileInput.files?.[0], fileInput));
-recordInput.addEventListener('change', () => prepareSelectedVideo(recordInput.files?.[0], recordInput));
+fileInput.addEventListener('change', (e) => {
+  console.log('File input changed');
+  prepareSelectedVideo(fileInput.files?.[0], fileInput);
+});
+
+recordInput.addEventListener('change', (e) => {
+  console.log('Record input changed');
+  prepareSelectedVideo(recordInput.files?.[0], recordInput);
+});
 
 analyzeBtn.addEventListener('click', async (event)=>{
   event.preventDefault();
+  console.log('Analyze clicked. Selected file:', selectedFile);
   setStatus('Starting analysis…');
   if (!selectedFile) {
     setStatus('Choose or record a walking video first.');
@@ -232,7 +258,10 @@ analyzeBtn.addEventListener('click', async (event)=>{
       if(i%4===0) await new Promise(r=>setTimeout(r,0));
     }
     renderResults(rows,$('side').value,sampleFps); setStatus('Analysis complete.');
-  }catch(e){ setStatus(`Could not analyze this video: ${e.message}`); }
+  }catch(e){ 
+    console.error('Analysis error:', e);
+    setStatus(`Could not analyze this video: ${e.message}`); 
+  }
   finally{ setAnalyzeReady(Boolean(selectedFile)); $('progress').classList.add('hidden'); }
 });
 
@@ -276,7 +305,7 @@ function renderResults(data,side,fps){
   if(Number.isFinite(opRom)&&Number.isFinite(otRom)&&opRom+8<otRom) notes.push('The operated knee shows a smaller movement range. Use only gait and mobility drills already approved by your surgeon or PT.');
   if(Number.isFinite(asym)&&asym>10) notes.push('Step timing appears asymmetric. Ask your PT to assess weight acceptance, stance time, pain, and confidence on the operated leg.');
   const trunk=mean(data.map(r=>Math.abs(r.trunk_lean_deg))); if(Number.isFinite(trunk)&&trunk>6) notes.push('Trunk compensation was detected. Your PT can determine whether pain, hip weakness, balance, or reduced stance time is contributing.');
-  if(!notes.length) notes.push('No large difference crossed the app's conservative screening thresholds. Continue your prescribed rehabilitation and show the video and results to your PT.');
+  if(!notes.length) notes.push('No large difference crossed the app\'s conservative screening thresholds. Continue your prescribed rehabilitation and show the video and results to your PT.');
   $('suggestions').innerHTML=notes.map(n=>`<li>${n}</li>`).join('');
   $('quality').innerHTML=`Tracking quality: <strong class="${detection>.85?'good':detection>.65?'warn':'bad'}">${Math.round(detection*100)}%</strong>. Results are more useful when both feet have at least three detected contacts.`;
   $('results').classList.remove('hidden'); $('results').scrollIntoView({behavior:'smooth'});
@@ -289,7 +318,7 @@ $('downloadCsv').addEventListener('click',()=>{
 });
 
 setAnalyzeReady(false);
-
+console.log('App initialized. Button disabled state:', analyzeBtn.disabled);
 
 // Explain local-file limitations without preventing file selection.
 if (location.protocol === 'content:' || location.protocol === 'file:') {
