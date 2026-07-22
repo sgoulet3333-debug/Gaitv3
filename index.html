@@ -27,7 +27,9 @@
     button:disabled { opacity:.48; cursor:not-allowed; }
     button:not(:disabled):hover { opacity:.9; }
     button:not(:disabled):active { opacity:.8; transform:scale(0.98); }
-    video,canvas { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; }
+    .video-container { position: relative; width: 100%; }
+    video { width:100%; border-radius:14px; background:#020617; max-height:62vh; object-fit:contain; display:block; }
+    #overlayCanvas { position: absolute; top: 0; left: 0; border-radius: 14px; }
     canvas { display:none; }
     progress { width:100%; height:14px; accent-color:var(--accent); }
     .status { margin-top:10px; color:#caeaff; min-height:24px; font-size: 0.9rem; }
@@ -72,7 +74,10 @@
       </div>
     </div>
     <p class="muted" id="fileNote">Your video is not uploaded to a server.</p>
-    <video id="video" controls playsinline preload="metadata" crossorigin="anonymous"></video>
+    <div class="video-container">
+      <video id="video" controls playsinline preload="metadata" crossorigin="anonymous"></video>
+      <canvas id="overlayCanvas"></canvas>
+    </div>
     <canvas id="canvas"></canvas>
     <button id="analyze" type="button" disabled>Choose a walking video first</button>
     <progress id="progress" class="hidden" max="100" value="0"></progress>
@@ -96,15 +101,16 @@
   </section>
 </main>
 <script>
-// Simplified debugging
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 const fileInput = $('videoFile');
 const recordInput = $('recordFile');
 const analyzeBtn = $('analyze');
 const canvas = $('canvas');
+const overlayCanvas = $('overlayCanvas');
 const debugDiv = $('debug');
 const ctx = canvas ? canvas.getContext('2d', { willReadFrequently: true }) : null;
+const overlayCtx = overlayCanvas ? overlayCanvas.getContext('2d') : null;
 
 let poseLandmarker;
 let rows = [];
@@ -130,32 +136,20 @@ function setAnalyzeReady(ready) {
   analyzeBtn.textContent = ready ? 'Analyze walking gait' : 'Choose a walking video first';
 }
 
-// Set up ALL video event listeners BEFORE anything else
+// Video event listeners
 addDebug('Setting up video event listeners...');
 
-video.addEventListener('play', () => addDebug('EVENT: play'));
-video.addEventListener('pause', () => addDebug('EVENT: pause'));
-video.addEventListener('playing', () => addDebug('EVENT: playing'));
-video.addEventListener('loadstart', () => addDebug('EVENT: loadstart'));
-video.addEventListener('progress', () => addDebug('EVENT: progress, buffered: ' + video.buffered.length));
-video.addEventListener('suspend', () => addDebug('EVENT: suspend'));
-video.addEventListener('abort', () => addDebug('EVENT: abort'));
+video.addEventListener('loadedmetadata', () => {
+  addDebug('EVENT: loadedmetadata - duration: ' + video.duration + ', size: ' + video.videoWidth + 'x' + video.videoHeight);
+  if (overlayCanvas) {
+    overlayCanvas.width = video.videoWidth;
+    overlayCanvas.height = video.videoHeight;
+  }
+  if (selectedFile) setAnalyzeReady(true);
+});
 video.addEventListener('error', (e) => {
   addDebug('EVENT: ERROR - ' + (video.error ? video.error.code + ': ' + video.error.message : 'unknown'));
 });
-video.addEventListener('emptied', () => addDebug('EVENT: emptied'));
-video.addEventListener('loadedmetadata', () => {
-  addDebug('EVENT: loadedmetadata - duration: ' + video.duration + ', size: ' + video.videoWidth + 'x' + video.videoHeight);
-  if (selectedFile) setAnalyzeReady(true);
-});
-video.addEventListener('loadeddata', () => addDebug('EVENT: loadeddata'));
-video.addEventListener('canplay', () => addDebug('EVENT: canplay'));
-video.addEventListener('canplaythrough', () => addDebug('EVENT: canplaythrough'));
-video.addEventListener('playing', () => addDebug('EVENT: playing'));
-video.addEventListener('seeking', () => addDebug('EVENT: seeking'));
-video.addEventListener('seeked', () => addDebug('EVENT: seeked'));
-video.addEventListener('ended', () => addDebug('EVENT: ended'));
-video.addEventListener('durationchange', () => addDebug('EVENT: durationchange, duration: ' + video.duration));
 
 function angle(a,b,c){
   const bax=a.x-b.x, bay=a.y-b.y, bcx=c.x-b.x, bcy=c.y-b.y;
@@ -196,6 +190,135 @@ async function loadModel(){
   }
 }
 
+function drawSkeleton(landmarks, angles) {
+  if (!overlayCtx || !overlayCanvas) return;
+  
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+  
+  // Extract key points
+  const p = {
+    nose: landmarks[0],
+    ls: landmarks[11], rs: landmarks[12],
+    lh: landmarks[23], rh: landmarks[24],
+    lk: landmarks[25], rk: landmarks[26],
+    la: landmarks[27], ra: landmarks[28],
+    lheel: landmarks[29], rheel: landmarks[30],
+    ltoe: landmarks[31], rtoe: landmarks[32]
+  };
+  
+  const lineColor = '#59c3ff';
+  const jointRadius = 4;
+  const lineWidth = 2;
+  
+  // Draw skeleton lines
+  overlayCtx.strokeStyle = lineColor;
+  overlayCtx.lineWidth = lineWidth;
+  overlayCtx.lineCap = 'round';
+  overlayCtx.lineJoin = 'round';
+  
+  // Body segments
+  const segments = [
+    [p.nose, {x: (p.ls.x + p.rs.x) / 2, y: (p.ls.y + p.rs.y) / 2}], // neck to shoulders
+    [p.ls, p.lh], // left shoulder to hip
+    [p.rs, p.rh], // right shoulder to hip
+    [p.lh, p.rh], // hip line
+    [p.lh, p.lk], // left hip to knee
+    [p.rh, p.rk], // right hip to knee
+    [p.lk, p.la], // left knee to ankle
+    [p.rk, p.ra], // right knee to ankle
+    [p.la, p.lheel], // left ankle to heel
+    [p.ra, p.rheel], // right ankle to heel
+    [p.lheel, p.ltoe], // left heel to toe
+    [p.rheel, p.rtoe], // right heel to toe
+  ];
+  
+  segments.forEach(([start, end]) => {
+    if (start.visibility > 0.3 && end.visibility > 0.3) {
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(start.x, start.y);
+      overlayCtx.lineTo(end.x, end.y);
+      overlayCtx.stroke();
+    }
+  });
+  
+  // Draw joints
+  overlayCtx.fillStyle = lineColor;
+  Object.values(p).forEach(point => {
+    if (point.visibility > 0.3) {
+      overlayCtx.beginPath();
+      overlayCtx.arc(point.x, point.y, jointRadius, 0, Math.PI * 2);
+      overlayCtx.fill();
+    }
+  });
+  
+  // Draw angle labels
+  overlayCtx.fillStyle = '#ffca65';
+  overlayCtx.font = 'bold 14px Arial';
+  overlayCtx.textAlign = 'center';
+  overlayCtx.textBaseline = 'middle';
+  
+  const shoulder = {x: (p.ls.x + p.rs.x) / 2, y: (p.ls.y + p.rs.y) / 2};
+  const hip = {x: (p.lh.x + p.rh.x) / 2, y: (p.lh.y + p.rh.y) / 2};
+  
+  // Trunk angle
+  if (angles.trunk && Number.isFinite(angles.trunk)) {
+    overlayCtx.fillText(angles.trunk.toFixed(1) + '° (Trunk)', shoulder.x, shoulder.y - 30);
+  }
+  
+  // Hip angle
+  if (angles.hip && Number.isFinite(angles.hip)) {
+    overlayCtx.fillText(angles.hip.toFixed(1) + '° (Hip)', hip.x, hip.y - 20);
+  }
+  
+  // Knee angle
+  if (angles.knee && Number.isFinite(angles.knee)) {
+    const kneePos = angles.side === 'left' ? p.lk : p.rk;
+    overlayCtx.fillText(angles.knee.toFixed(1) + '° (Knee)', kneePos.x + 30, kneePos.y);
+  }
+  
+  // Ankle angle
+  if (angles.ankle && Number.isFinite(angles.ankle)) {
+    const anklePos = angles.side === 'left' ? p.la : p.ra;
+    overlayCtx.fillText(angles.ankle.toFixed(1) + '° (Ankle)', anklePos.x + 30, anklePos.y + 30);
+  }
+}
+
+function buildRow(l, t){
+  const p={ls:l[11],rs:l[12],lh:l[23],rh:l[24],lk:l[25],rk:l[26],la:l[27],ra:l[28],lheel:l[29],rheel:l[30],ltoe:l[31],rtoe:l[32]};
+  const shoulder={x:(p.ls.x+p.rs.x)/2,y:(p.ls.y+p.rs.y)/2}, hip={x:(p.lh.x+p.rh.x)/2,y:(p.lh.y+p.rh.y)/2};
+  const r={time_s:t,left_knee_angle:angle(p.lh,p.lk,p.la),right_knee_angle:angle(p.rh,p.rk,p.ra),left_heel_y:p.lheel.y,right_heel_y:p.rheel.y,hip_drop:p.lh.y-p.rh.y,trunk_lean_deg:Math.atan2(shoulder.x-hip.x,hip.y-shoulder.y)*180/Math.PI};
+  for(const [k,v] of Object.entries(p)){ r[`${k}_x`]=v.x;r[`${k}_y`]=v.y;r[`${k}_visibility`]=v.visibility??1; }
+  return r;
+}
+
+function renderResults(data,side,fps){
+  const other=side==='left'?'right':'left', valid=data.filter(r=>Number.isFinite(r[`${side}_knee_angle`]));
+  const detection=valid.length/data.length;
+  for(const col of [`${side}_knee_angle`,`${other}_knee_angle`,`${side}_heel_y`,`${other}_heel_y`,'trunk_lean_deg','hip_drop']){
+    const sm=smooth(data.map(r=>r[col])); data.forEach((r,i)=>r[col]=sm[i]);
+  }
+  const minDist=Math.max(5,Math.floor(fps*.45));
+  const op=minima(data.map(r=>-r[`${side}_heel_y`]),minDist), ot=minima(data.map(r=>-r[`${other}_heel_y`]),minDist);
+  const ext=(idx,s)=>idx.map(i=>Math.max(...data.slice(Math.max(0,i-2),Math.min(data.length,i+3)).map(r=>r[`${s}_knee_angle`]).filter(Number.isFinite)));
+  const opExt=ext(op,side), otExt=ext(ot,other), opCycles=op.slice(1).map((x,i)=>(x-op[i])/fps), otCycles=ot.slice(1).map((x,i)=>(x-ot[i])/fps);
+  const opAngles=data.map(r=>r[`${side}_knee_angle`]), otAngles=data.map(r=>r[`${other}_knee_angle`]);
+  const opRom=percentile(opAngles,.95)-percentile(opAngles,.05), otRom=percentile(otAngles,.95)-percentile(otAngles,.05);
+  const extensionDiff=mean(otExt)-mean(opExt), cycleMean=mean([mean(opCycles),mean(otCycles)]), asym=Math.abs(mean(opCycles)-mean(otCycles))/cycleMean*100;
+  const metrics=[['Operated extension near contact',fmt(mean(opExt),'°')],['Other-side extension near contact',fmt(mean(otExt),'°')],['Estimated extension difference',fmt(extensionDiff,'°')],['Operated knee movement range',fmt(opRom,'°')],['Other-side movement range',fmt(otRom,'°')],['Estimated stride-time asymmetry',fmt(asym,'%')],['Mean trunk lean',fmt(mean(data.map(r=>Math.abs(r.trunk_lean_deg))),'°')],['Detected operated contacts',String(op.length)]];
+  $('metrics').innerHTML=metrics.map(([n,v])=>`<div class="metric"><span>${n}</span><strong>${v}</strong></div>`).join('');
+  const notes=[];
+  if(detection<.7) notes.push('Body tracking was inconsistent. Re-record with brighter lighting and your entire body visible.');
+  if(op.length<3||ot.length<3) notes.push('Only a few foot contacts were detected. Use a longer clip with 8–12 clear steps.');
+  if(Number.isFinite(extensionDiff)&&extensionDiff>5) notes.push('The operated knee appears less straight near foot contact. Ask your PT to check swelling, extension range, quadriceps control, and terminal-knee-extension avoidance.');
+  if(Number.isFinite(opRom)&&Number.isFinite(otRom)&&opRom+8<otRom) notes.push('The operated knee shows a smaller movement range. Use only gait and mobility drills already approved by your surgeon or PT.');
+  if(Number.isFinite(asym)&&asym>10) notes.push('Step timing appears asymmetric. Ask your PT to assess weight acceptance, stance time, pain, and confidence on the operated leg.');
+  const trunk=mean(data.map(r=>Math.abs(r.trunk_lean_deg))); if(Number.isFinite(trunk)&&trunk>6) notes.push('Trunk compensation was detected. Your PT can determine whether pain, hip weakness, balance, or reduced stance time is contributing.');
+  if(!notes.length) notes.push('No large difference crossed the app\'s conservative screening thresholds. Continue your prescribed rehabilitation and show the video and results to your PT.');
+  $('suggestions').innerHTML=notes.map(n=>`<li>${n}</li>`).join('');
+  $('quality').innerHTML=`Tracking quality: <strong class="${detection>.85?'good':detection>.65?'warn':'bad'}">${Math.round(detection*100)}%</strong>. Results are more useful when both feet have at least three detected contacts.`;
+  $('results').classList.remove('hidden'); $('results').scrollIntoView({behavior:'smooth'});
+}
+
 async function prepareSelectedVideo(file, sourceInput) {
   addDebug('File selected: ' + (file ? file.name + ' (' + file.size + ' bytes)' : 'none'));
   
@@ -222,9 +345,6 @@ async function prepareSelectedVideo(file, sourceInput) {
   
   $('fileNote').textContent = `${file.name || 'Video'} • ${(file.size/1048576).toFixed(1)} MB • stays on this device`;
   setStatus('Reading video...');
-  
-  // Don't call load() - just wait for events
-  addDebug('Waiting for video metadata...');
 }
 
 fileInput.addEventListener('change', (e) => {
@@ -245,12 +365,60 @@ analyzeBtn.addEventListener('click', async (event)=>{
     setStatus('Choose or record a walking video first.');
     return;
   }
-  // TODO: Add analysis logic
-  setStatus('Analysis feature coming soon. Button working!');
+  try{
+    analyzeBtn.disabled=true; analyzeBtn.textContent='Analyzing…';
+    $('progress').classList.remove('hidden'); $('progress').value=0; $('results').classList.add('hidden'); rows=[];
+    await loadModel();
+    if(!Number.isFinite(video.duration)||video.duration<=0) throw new Error('The video duration could not be read. Try an MP4 recorded by your phone.');
+    if (!video.videoWidth || !video.videoHeight) throw new Error('The video image could not be decoded. Try selecting the clip from your Gallery.');
+    const duration=Math.min(video.duration,30), sampleFps=10, frames=Math.max(1,Math.floor(duration*sampleFps));
+    canvas.width=video.videoWidth; canvas.height=video.videoHeight;
+    const side = $('side').value;
+    
+    for(let i=0;i<frames;i++){
+      const t=Math.max(0, Math.min(duration-.001,i/sampleFps));
+      video.currentTime = t;
+      await new Promise(r => video.addEventListener('seeked', r, { once: true }));
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      const result=poseLandmarker.detectForVideo(canvas,Math.round(t*1000));
+      
+      if(result.landmarks?.[0]) {
+        rows.push(buildRow(result.landmarks[0],t));
+        
+        // Draw skeleton on overlay
+        const p={ls:result.landmarks[0][11],rs:result.landmarks[0][12],lh:result.landmarks[0][23],rh:result.landmarks[0][24],lk:result.landmarks[0][25],rk:result.landmarks[0][26],la:result.landmarks[0][27],ra:result.landmarks[0][28]};
+        const shoulder={x:(p.ls.x+p.rs.x)/2,y:(p.ls.y+p.rs.y)/2}, hip={x:(p.lh.x+p.rh.x)/2,y:(p.lh.y+p.rh.y)/2};
+        const angles = {
+          trunk: Math.atan2(shoulder.x-hip.x,hip.y-shoulder.y)*180/Math.PI,
+          hip: Math.abs(p.lh.y - p.rh.y),
+          knee: angle(side==='left'?p.lh:p.rh, side==='left'?p.lk:p.rk, side==='left'?p.la:p.ra),
+          ankle: 0,
+          side: side
+        };
+        drawSkeleton(result.landmarks[0], angles);
+      } else {
+        rows.push({time_s:t});
+      }
+      
+      $('progress').value=Math.round((i+1)/frames*100); setStatus(`Analyzing frame ${i+1} of ${frames}…`);
+      if(i%4===0) await new Promise(r=>setTimeout(r,0));
+    }
+    renderResults(rows,side,sampleFps); setStatus('Analysis complete.');
+  }catch(e){ 
+    console.error('Analysis error:', e);
+    setStatus(`Could not analyze this video: ${e.message}`); 
+  }
+  finally{ setAnalyzeReady(Boolean(selectedFile)); $('progress').classList.add('hidden'); }
+});
+
+$('downloadCsv').addEventListener('click',()=>{
+  if(!rows.length)return; const keys=[...new Set(rows.flatMap(Object.keys))];
+  const csv=[keys.join(','),...rows.map(r=>keys.map(k=>Number.isFinite(r[k])?r[k]: '').join(','))].join('\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='acl-gait-frame-data.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 });
 
 setAnalyzeReady(false);
-addDebug('App ready. Debug panel active.');
+addDebug('App ready. Skeleton visualization active.');
 </script>
 </body>
 </html>
